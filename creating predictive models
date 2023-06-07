@@ -1,0 +1,181 @@
+#Model and final submission code
+#---------------------------------------------------------------------------------------------
+#Step 1: Loading libraries needed for this Kaggle competition.
+#---------------------------------------------------------------------------------------------
+#forecasting
+library(fpp3)
+library(forecast)
+library(lubridate)
+library(tseries)
+library(data.table)
+
+#will be using parallel processing for a faster processing time 
+library(doParallel)
+install.packages("doMC", repos="http://R-Forge.R-project.org")
+library(doMC)
+#---------------------------------------------------------------------------------------------
+#Step 2: Loading the data
+#---------------------------------------------------------------------------------------------
+#AirREGI data
+air.visit <- read.csv("C:/Users/alice/Downloads/air_visit_data.csv")
+air.store <- read.csv("C:/Users/alice/Downloads/air_store_info.csv")
+
+#Holidays data
+date <- read.csv("C:/Users/alice/Downloads/date_info.csv")
+
+#Loading in dataset for the final submission.
+test <- read.csv("C:/Users/alice/Downloads/testmission.csv")
+
+#---------------------------------------------------------------------------------------------
+#Step 3: Forecasting the Data and Comparing Models
+#At this point, we have sufficiently analyzed and visualized the data to get a better understanding.
+#We are now ready to move onto forecasting the data and seeing how it performs.
+#For models, I will be choosing ARIMA, ETS, and Neural Network models to examine and see which performs best.
+#---------------------------------------------------------------------------------------------
+#Firstly, we have to data prep.
+#I'm curious to examine holidays and to add it into our testing dataset.
+
+#Filtering for holidays, 1 indicates that it the day is a holiday.
+holidays <- date %>% filter(holiday_flg == 1)
+
+#using as.Date() to convert chr to date for the air.visit dataset
+air.visit$visit_date <- as.Date(air.visit$visit_date)
+
+#adding another column "is_holiday" to our main dataset of interest
+air.visit$is_holiday <- factor(ifelse(air.visit$visit_date %in% holidays$calendar_date, 1, 0))
+
+#After adding holidays to our dataset of interest, we need to set up the aggregate. 
+agg <- air.visit %>% 
+  group_by(visit_date, is_holiday) %>% 
+  summarise(all_visitors = sum(visitors))
+
+#Building forecast model, however we are only looking at a specific group of visit dates.
+#Why? Because there was a clear structural change after 2016 in the time series when we analyzed the data earlier. 
+cut1 <- agg %>% 
+  filter(visit_date >= '2016-07-01') 
+
+#Splitting our training and test datasets. 
+#Disclaimer: I have taken this idea from user mymy610 on Kaggle since I thought it was a smart way to go about it. 
+cut1.train <- cut1 %>%
+  filter(visit_date < '2017-03-01')
+cut1.test <- cut1 %>% 
+  filter(visit_date >= '2017-03-01')
+
+#--------------------------------------------------------------
+#Now, we are ready to begin looking at models of our interest.
+#--------------------------------------------------------------
+#First, we will look at an auto.arima model. 
+cut1.arima <- auto.arima(ts(cut1.train$all_visitors,frequency = 7), stepwise=FALSE, approximation=FALSE)
+summary(cut1.arima)
+checkresiduals(cut1.arima)
+
+#ARIMA forecasting and examining how it performed.
+#We set h=53 because there are 53 days in between 3/1 and 4/22 (including 3/1)
+cut1.arima.fc <- forecast(cut1.arima, h=53)
+acc.cut1.arima <- accuracy(cut1.arima.fc, cut1.test$all_visitors)
+
+#---------------------------------------------------------------
+#Now, let's examine default ETS model. Hence, why model = 'ZZZ'
+cut1.ets <- ets(ts(cut1.train$all_visitors,frequency = 7), model = 'ZZZ')
+summary(cut1.ets)
+checkresiduals(cut1.ets)
+
+#ETS forecast and examining results.
+cut1.ets.fc <- forecast(cut1.ets, h=53)
+acc.cut1.ets <- accuracy(cut1.ets.fc,cut1.test$all_visitors)
+
+#---------------------------------------------------------------
+#Now, we will examine a Neural Network model.
+cut1.nnet <- nnetar(ts(cut1.train$all_visitors, frequency = 7))
+summary(cut1.nnet)
+checkresiduals(cut1.nnet)
+
+#Neural Network forecast and viewing results.
+cut1.nnet.fc <- forecast(cut1.nnet, h=53)
+acc.cut1.nnet <- accuracy(cut1.nnet.fc, cut1.test$all_visitors)
+
+#---------------------------------------------------------------  
+#Comparing ETS, ARIMA, and NN models
+#ETS model performed the best by far with the lowest RMSE and MAE values.
+results.cut1 <- matrix(c(acc.arima[1,2:3],acc.cut1.arima[2,2:3],
+                         acc.cut1.ets[1,2:3],acc.cut1.ets[2,2:3],
+                         acc.cut1.nnet[1,2:3], acc.cut1.nnet[2.2:3])
+                       , nrow=3, ncol=4, byrow = T)
+colnames(results.cut1)=c("RMSE-train","MAE-train","RMSE-test","MAE-test")
+rownames(results.cut1)=c("ARIMA Model","ETS Model", "Neural Networks")
+as.table(results.cut1)
+
+#Final model chosen!
+cut2 <- d1 %>% 
+  filter(visit_date >= '2016-07-01')
+
+model <- ets(ts(cut2$all_visitors,frequency = 7), model = 'ZZZ')
+summary(model)
+
+#Here we are forecasting and graphing out the ETS (M,N,A) forecast.
+model.fc <- forecast(model, h=53)
+autoplot(model.fc) +
+  labs(y = "Aggregate Number of Visitors"
+       ,title = "ETS (M,N,A) Forecast"
+       ,subtitle = "Aggregate")
+#---------------------------------------------------------------------------------------------
+#Step 4: Preparing models for our Kaggle submission.
+#Credit: I was guided by user dongxu027's code on Kaggle since I was unfamiliar with this concept of parallel processing.
+#I wanted to create a matrix of multiple models and use it in my submission.
+#I learned how to use parallel processing and how computations can be made faster with it's use.
+#---------------------------------------------------------------------------------------------
+#Time to submit!
+
+#But first, we want to make sure that as.Date is implemented and in the correct format. 
+air.visit$visit_date <- as.Date(parse_date_time(air.visit$visit_date,'%y-%m-%d'))
+
+#We use dcast here because we will need to convert data from wide to long later, so we are using it to reshape data and order our rows by specific variables.
+train_wide <- dcast( 
+  air.visit, air_store_id ~ visit_date, value.var = "visitors", fill = 0)
+
+#Creating train_ts to use when we create our forecast matrix and combine ETS, ARIMA, and Neural Network models together. 
+train_ts <- ts(train_wide[, 2:dim(train_wide)[2]], frequency = 7) 
+fcst_intv = 39  
+fcst_matrix <- matrix(NA,nrow=4*nrow(train_ts),ncol=fcst_intv)
+
+#Here, we are using parallel processing. Essentially, parallel processing breaks up different parts of the task so it reduces amount of time to run.
+#Parallel processing is used a lot when running big amounts of data.
+#This took around 20 minutes to fully run with all 3 models, but when I tried with only 2 it took much less time. 
+#However, I suspect it would have taken longer without using parallel processing.
+ registerDoMC(detectCores()-1)
+ fcst_matrix <- foreach(i=1:nrow(train_ts),.combine=rbind, .packages=c("forecast")) %do% { 
+   fcst_ets <- forecast(ets(train_ts[i,]),h=fcst_intv)$mean
+   fcst_arima <- forecast(auto.arima(train_ts[i,]),h=fcst_intv)$mean
+   fcst_nn <- forecast(nnetar(train_ts[i,]),h=fcst_intv)$mean
+   fcst_matrix <- rbind(fcst_ets, fcst_arima, fcst_nn)
+}
+
+#After creating the initial frame, we have to post-process and make sure that we set dates forecasted to the ones we were tasked with: from 4/23 to 5/31
+fcst_matrix_mix <- aggregate(fcst_matrix,list(rep(1:(nrow(fcst_matrix)/2),each=2)),mean)[-1]
+fcst_matrix_mix[fcst_matrix_mix < 0] <- 0
+colnames(fcst_matrix_mix) <- as.character(
+  seq(from = as.Date("2017-04-23"), to = as.Date("2017-05-31"), by = 'day'))
+fcst_df <- as.data.frame(cbind(train_wide[, 1], fcst_matrix_mix)) 
+colnames(fcst_df)[1] <- "air_store_id"
+
+#Format must be in long for the submission, so we have to use the melt() function to convert from wide from earlier to long now.
+fcst_df_long <- melt(
+  fcst_df, id = 'air_store_id', variable.name = "fcst_date", value.name = 'visitors')
+
+#Here we are cleaning the data, making sure format and variable types are correct.
+fcst_df_long$air_store_id <- as.character(fcst_df_long$air_store_id)
+fcst_df_long$fcst_date <- as.Date(parse_date_time(fcst_df_long$fcst_date,'%y-%m-%d'))
+fcst_df_long$visitors <- as.numeric(fcst_df_long$visitors)
+
+#Finally using our test dataset we loaded in the beginning in preparation to create the sample submission file.
+testmission$visitors <- NULL
+test$store_id <- substr(test$id, 1, 20)
+test$visit_date <- substr(test$id, 22, 31)
+test$visit_date <- as.Date(parse_date_time(test$visit_date,'%y-%m-%d'))
+
+#Combining the dataframes together to create the final submission file.
+submission <- left_join(
+  test, fcst_df_long, c("store_id" = "air_store_id", 'visit_date' = 'fcst_date'))
+submission$visitors[is.na(submission$visitors)] <- 0
+final_submission <- select(submission, c('id', 'visitors'))
+write.csv(final_submission, "submission_final2.csv", row.names = FALSE)
