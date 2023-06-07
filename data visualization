@@ -1,0 +1,181 @@
+#Alice Tang
+#ADEC7460 Midterm
+#4 December 2022
+#Data Visualization
+#---------------------------------------------------------------------------------------------
+#Step 1: Loading libraries needed for this Kaggle competition for data visualization.
+#---------------------------------------------------------------------------------------------
+library(ggplot2)
+library(dplyr)
+library(fpp3)
+library(forecast)
+library(lubridate)
+library(tseries)
+#---------------------------------------------------------------------------------------------
+#Step 2: Loading the data
+#I chose to only look at the AirRegi datasets and not HPG. I also plan on acknowledging and examining whether Holidays has an effect as well.
+#---------------------------------------------------------------------------------------------
+#AIR data
+air_visits <- read.csv("C:/Users/alice/Downloads/air_visit_data.csv")
+air_store <- read.csv("C:/Users/alice/Downloads/air_store_info.csv")
+
+#Holidays
+holidays <- read.csv("C:/Users/alice/Downloads/date_info.csv")
+
+#Sample submission
+test <- read.csv("C:/Users/alice/Downloads/sample_submission.csv")
+
+#---------------------------------------------------------------------------------------------
+#Step 3: Examining and visualizing the datasets to understand the characteristics of each.
+#---------------------------------------------------------------------------------------------
+#First, looking at air visits.
+#The mean visitors for each restaurant is only 20.97. A bit surprising to me. 
+summary(air_visits)
+glimpse(air_visits)
+
+#Checking NA values in dataset, and we find that we have none!
+sum(is.na(air_visits))
+
+#We can see that there are 829 different stores in this dataset.
+air_visits %>% distinct(air_store_id)  %>%  nrow()
+
+#Before we try to visualize the data, I notice that visit_date is chr. 
+#This will be an issue if we try to graph this out. So, we have to convert it to as.Date!
+air_visits$visit_date <- as.Date(ymd(air_visits$visit_date))
+
+#Graphing the total number of visitors for each day.
+#We can see that it looks like there is a periodic pattern of a weekly cycle. There was a big dip in 2017 as well.
+air_visits %>%
+  group_by(visit_date) %>%
+  summarise(all_visitors = sum(visitors)) %>%
+  ggplot(aes(x= visit_date, y= all_visitors)) +
+  geom_line(col = "purple") +
+  labs(x = "Date", y = "Sum of Visitors") +
+  ggtitle("Total Visitors Each Day")
+
+#Now we will graph the number of visitors at each restaurant.
+#We can see that usually it peaks at 20 visitors per day (we saw that earlier when we took a glimpse at the data).
+air_visits %>%
+  ggplot(aes(visitors)) +
+  geom_vline(xintercept = 20, color = "red") +
+  geom_histogram(fill = "purple") +
+  scale_x_log10()
+
+#The mean amount of visitors for each day of the week.
+#We can see that Friday, Saturday, and Sunday have the most amount of visitors on average. 
+#This makes sense considering people have more time to dine-out on weekends. 
+air_visits %>%
+  mutate(wday = wday(visit_date, label = TRUE, week_start = 1)) %>%
+  group_by(wday) %>%
+  summarise(visits = mean(visitors)) %>%
+  ggplot(aes(wday, visits, fill = wday)) +
+  geom_col() +
+  theme(legend.position= "none") +
+  labs(x = "Day of the Week", y = "Mean Number of Visitors") + 
+  ggtitle("Mean Amount of Visitors Based on Days of the Week")
+
+#The mean amount of visitors for each month.
+#December is the month with the most amount of visitors. March, April, and May also seem to have the most visitors after December.
+air_visits %>%
+  mutate(month = month(visit_date, label = TRUE)) %>%
+  group_by(month) %>%
+  summarise(visits = mean(visitors)) %>%
+  ggplot(aes(month, visits, fill = month)) +
+  geom_col() +
+  theme(legend.position = "none") +
+  labs(x = "Month", y = "Mean Number of visitors") +
+  ggtitle("Mean Amount of Visitors Based on the Month")
+
+#---------------------------------------------------------------------------------------------
+#Examining air_store now to see the categories it contains.
+#We can see that we are given a particular area as well as the type of cuisine for each restaurant. This could definitely be useful.
+summary(air_store)
+glimpse(air_store)
+
+#Checking to see if we have any NA values... and we have none!
+sum(is.na(air_store))
+
+#Visualizing the distribution of the types of cuisine each restaurant has.
+#Izakaya is the cuisine category with the most number of restaurants.
+air_store %>%
+  group_by(air_genre_name) %>%
+  count() %>%
+  ggplot(aes(reorder(air_genre_name, n, FUN = min), n, fill = air_genre_name)) +
+  geom_col() +
+  coord_flip() +
+  theme(legend.position = "none") +
+  labs(x = "Type of Cuisine (air_genre_name)", y = "Number of AIR Restaurants")
+
+#Now we check to see the most popular areas a restaurant could be (TOP 20).
+#From our results, we can see that Fukuoka has the most amount of restaurant in the area. 
+#The following 5 areas with the most restaurants are all in the Tokyo vicinity as well.
+air_store %>%
+  group_by(air_area_name) %>%
+  count() %>%
+  ungroup() %>%
+  top_n(20,n) %>%
+  ggplot(aes(reorder(air_area_name, n, FUN = min) ,n, fill = air_area_name)) +
+  geom_col() +
+  theme(legend.position = "none") +
+  coord_flip() +
+  labs(x = "Top 20 Areas for Restaurants (air_area_name)", y = "Number of AIR Restaurants")
+
+#---------------------------------------------------------------------------------------------
+#Lastly, taking a look at holidays since the period of time we are predicting is during a holiday week.
+summary(holidays)
+glimpse(holidays)
+
+#Checking for missing values and there are none!
+sum(is.na(holidays))
+
+#Before graphing, we have to deal with calendar_date since it is of chr class. We must change it to date format.
+holidays$calendar_date <- as.Date(ymd(holidays$calendar_date))
+
+#Visualizing the amount of holidays versus non-holidays. 
+holidays %>% 
+  group_by(holiday_flg) %>% 
+  summarise(days=n()) %>%
+  ggplot(aes(x=holiday_flg, y=days, fill=as.factor(days))) + 
+  geom_bar(stat = "identity") +
+  geom_text(aes(label=days), size=5, position = position_stack(vjust=0.5)) + 
+  theme_minimal() + 
+  theme(legend.position="none") +
+ ggtitle("Number of Holidays vs. Non-Holidays")
+
+#---------------------------------------------------------------------------------------------
+#Step 4: Combining datasets to conduct more analysis on the data.
+#This step is done to see if certain factors such as a holiday day vs. non-holiday have a significant impact.
+#Additionally, the final combined dataset will be used for our models.
+#---------------------------------------------------------------------------------------------
+#Combining air visits with holidays
+air_visit_holidays <- air_visits %>%
+  left_join(holidays, by=(c("visit_date" = "calendar_date"))) %>%
+  mutate(month = factor(strftime(visit_date, format='%B'),
+                                levels = format(ISOdate(2020,1:12,1),"%B")))
+
+#Now, checking whether visitors make a difference on holidays.
+#No, there does not seem to be a large impact on the average number of visitors when compared to previous plot.
+air_visit_holidays %>%
+  group_by(holiday_flg) %>% 
+  summarise(days=sum(visitors)) %>%
+  ggplot(aes(x=holiday_flg, y=days, fill=as.factor(days))) + 
+  geom_bar(stat = "identity") +
+  geom_text(aes(label=days), size=8, position = position_stack(vjust=0.5)) + 
+  theme_minimal() + 
+  theme(legend.position="none") +
+  ggtitle("Total Amount of Visitors On Non-Holidays and Holidays")
+
+#Combining all 3 datasets to form our final one.
+air_data <- air_visit_holidays %>%
+  left_join(air_store, by = (c("air_store_id")))
+
+#Visualizing the mean visitors for each type of cuisine.
+#We can see the similar means for the many of the genres.
+air_data %>%
+  group_by(visit_date, air_genre_name) %>% 
+  summarise(mean_visitors=mean(visitors)) %>%
+  ggplot(aes(color=air_genre_name, y=mean_visitors, x=visit_date)) + 
+  geom_line() + 
+  facet_wrap(~air_genre_name) + 
+  theme(legend.position="none") +
+  ggtitle('Mean Visitors for Each Type of Cuisine')
