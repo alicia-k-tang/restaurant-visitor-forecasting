@@ -16,4 +16,4 @@ consumers a better experience— one without any sort of delay in service, and o
 dining aspect. Accurately predicting the number of visitors leads to a win-win situation for both
 restaurants and consumers, making it an important problem to analyze.
 
-Further analysis containing graphs and literature review can be found in "Recruit Restaurant Forecasting Analysis" file of this repository.
+**Further analysis containing graphs and literature review can be found in "Recruit Restaurant Forecasting Analysis" file of this repository.
